@@ -1,0 +1,9 @@
+/target
+/result
+/pkg/
+/temp/
+*.tar.gz
+*.pkg.tar.zst
+.idea/
+src/ktouchbar-*/*.swp
+*.kate-swp

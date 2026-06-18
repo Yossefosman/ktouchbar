@@ -1,0 +1,245 @@
+# KTouchBar Configuration
+# Copy this file to ~/.config/ktouchbar/configs/config.toml and edit to customize.
+# The daemon loads system config first, then overrides from user config.
+
+[global]
+debug = false                                                    # print debug info
+show_outline = false                                             # global toggle for widget outlines
+outline_color = [0.3, 0.3, 0.3]                                  # grayscale or RGB: used for widget outlines
+active_color = 0.0                                               # highlight color when a widget is pressed
+slider_live_update = true                                        # write slider value during drag (true) or on release (false)
+slider_track_outline = [0.2, 0.2, 0.2]                           # 1px outline around slider bar track; omit for none
+enable_pixel_shift = false                                       # anti burn-in: shift pixels every few seconds
+font_template = "CaskaydiaMonoNerdFontMono:light"                # fontconfig pattern
+font_size = 32                                                   # default font size for text widgets
+icon_size = 48                                                   # default icon size for icon/battery widgets
+icon_theme = "auto"                                              # icon theme name, or "auto" to detect from system
+adaptive_brightness = true                                       # follow display brightness
+active_brightness = 128                                          # brightness level when touchbar is active (0-255)
+brightness_dim_timeout_ms = 120000                               # idle time before dimming (ms)
+brightness_off_timeout_ms = 300000                               # idle time before turning off (ms)
+dimmed_brightness = 1                                            # dim level (0-255)
+panel_timeout_seconds = 2                                        # auto-return from sub-panels (seconds)
+default_padding = 10                                             # used when a widget sets padding = "default"
+
+# ── Layers ──────────────────────────────────────────────────────
+# [layers.main] — shown by default
+# [layers.fn]   — shown when the Fn key is held
+#
+# Widget format (inline TOML table):
+#   { widget = "button", icon = "...", text = "...", action = { key = ["KeyName"] } }
+#
+# Widget types: button, slider, battery, clock, dynamic, container
+# Action types: { key = ["Key"] }, { panel = "name" }, { exec = "cmd" }, { back = true }
+#
+# Per-widget common fields:
+#   show_outline, outline_color, active_color, padding, padding_left/right,
+#   margin, margin_left/right, font_size, icon_size, theme, slider_track_outline
+#
+# Layout:
+#   - Widgets with explicit padding are fixed-width
+#   - Widgets without padding auto-expand to fill remaining space equally
+#   - padding = "default" uses default_padding from [global]
+#   - margin adds spacing outside the widget (both sides by default)
+
+# ── Main layer ──────────────────────────────────────────────────
+# Shown by default when Fn is NOT pressed.
+
+[layers.main]
+widgets = [
+    { widget = "battery", mode = "both", show_outline = false, padding = "default" },
+    { widget = "clock", format = "%I:%M%P %-e/%m", show_outline = false, outline_color = [0.2, 0.2, 0.2], padding = "default" },
+    { widget = "dynamic", show_outline = false },
+    { widget = "button", icon = "activities", action = { panel = "media" }, padding = "default" },
+]
+
+# ── fn layer ────────────────────────────────────────────────────
+# Shown when Fn IS pressed.
+
+[layers.fn]
+widgets = [
+    { widget = "button", text = "F1", action = { key = ["F1"] } },
+    { widget = "button", text = "F2", action = { key = ["F2"] } },
+    { widget = "button", text = "F3", action = { key = ["F3"] } },
+    { widget = "button", text = "F4", action = { key = ["F4"] } },
+    { widget = "button", text = "F5", action = { key = ["F5"] } },
+    { widget = "button", text = "F6", action = { key = ["F6"] } },
+    { widget = "button", text = "F7", action = { key = ["F7"] } },
+    { widget = "button", text = "F8", action = { key = ["F8"] } },
+    { widget = "button", text = "F9", action = { key = ["F9"] } },
+    { widget = "button", text = "F10", action = { key = ["F10"] } },
+    { widget = "button", text = "F11", action = { key = ["F11"] } },
+    { widget = "button", text = "F12", action = { key = ["F12"] } },
+]
+
+# ── Panels ──────────────────────────────────────────────────────
+# Sub-panels opened by { action = { panel = "name" } }.
+# Include a back button to return to the previous layer.
+
+[panels.media]
+widgets = [
+    { widget = "button", icon = "media-skip-backward", action = { key = ["PreviousSong"] }, show_outline = false },
+    { widget = "button", icon = "media-playback-pause", action = { key = ["PlayPause"] }, show_outline = false },
+    { widget = "button", icon = "media-skip-forward", action = { key = ["NextSong"] }, show_outline = false },
+    { widget = "button", icon = "microphone-sensitivity-high", action = { key = ["MicMute"] }, show_outline = false },
+    { widget = "button", icon = "audio-volume-high", action = { panel = "audioslider" }},
+    { widget = "button", icon = "brightness-high", action = { panel = "screenslider" }},
+    { widget = "button", icon = "input-keyboard-brightness", action = { panel = "keyboardslider" }},
+]
+
+[panels.audioslider]
+widgets = [
+    { widget = "slider", icon = "audio-volume-high", slider = "Volume", show_outline = false, padding = 300, margin_left = 1200 },
+    { widget = "button", icon = "go-previous", action = { back = true }, show_outline = false, padding = "default" },
+]
+
+[panels.screenslider]
+widgets = [
+    { widget = "slider", icon = "brightness-high", slider = "Brightness", show_outline = false, padding = 300, margin_left = 1200 },
+    { widget = "button", icon = "go-previous", action = { back = true }, show_outline = false, padding = "default" },
+]
+
+[panels.keyboardslider]
+widgets = [
+    { widget = "slider", icon = "input-keyboard-brightness", slider = "KeyboardBrightness", show_outline = false, padding = 300, margin_left = 1200 },
+    { widget = "button", icon = "go-previous", action = { back = true }, show_outline = false, padding = "default" },
+]
+
+# ── App rules for { widget = "dynamic" } ─────────────────────────
+# Each section is a window class name. When a window with that class
+# is focused, the dynamic widget is replaced by these shortcuts.
+# Dynamic inherits the parent widget's common fields (outline, padding,
+# icon_size, font_size, theme, etc.) and wraps them in a container.
+
+[app_rules.code]
+widgets = [
+    { widget = "button", icon = "system-run", action = { key = ["F1"] }},
+    { widget = "button", icon = "document-new", action = { key = ["LeftCtrl", "N"] }},
+    { widget = "button", icon = "document-save", action = { key = ["LeftCtrl", "S"] }},
+    { widget = "button", icon = "edit-find", action = { key = ["LeftCtrl", "F"] }},
+    { widget = "button", icon = "edit-find-replace", action = { key = ["LeftCtrl", "H"] }},
+    { widget = "button", icon = "system-search", action = { key = ["LeftCtrl", "P"] }},
+    { widget = "button", icon = "go-jump", action = { key = ["LeftCtrl", "G"] }},
+    { widget = "button", icon = "utilities-terminal", action = { key = ["LeftCtrl", "Grave"] }},
+]
+
+[app_rules.chromium]
+widgets = [
+    { widget = "button", icon = "view-refresh", action = { key = ["F5"] }},
+    { widget = "button", icon = "tab-new", action = { key = ["LeftCtrl", "T"] }},
+    { widget = "button", icon = "tab-close", action = { key = ["LeftCtrl", "W"] }},
+    { widget = "button", icon = "go-jump", action = { key = ["LeftCtrl", "L"] }},
+    { widget = "button", icon = "document-open-recent", action = { key = ["LeftCtrl", "H"] }},
+    { widget = "button", icon = "document-save-as", action = { key = ["LeftCtrl", "J"] }},
+    { widget = "button", icon = "document-print", action = { key = ["LeftCtrl", "P"] }},
+    { widget = "button", icon = "format-text-code", action = { key = ["F12"] }},
+]
+
+[app_rules.Firefox]
+widgets = [
+    { widget = "button", icon = "view-refresh", action = { key = ["F5"] }},
+    { widget = "button", icon = "tab-new", action = { key = ["LeftCtrl", "T"] }},
+    { widget = "button", icon = "tab-close", action = { key = ["LeftCtrl", "W"] }},
+    { widget = "button", icon = "go-jump", action = { key = ["LeftCtrl", "L"] }},
+    { widget = "button", icon = "document-open-recent", action = { key = ["LeftCtrl", "H"] }},
+    { widget = "button", icon = "bookmark-new", action = { key = ["LeftCtrl", "D"] }},
+    { widget = "button", icon = "document-print", action = { key = ["LeftCtrl", "P"] }},
+    { widget = "button", icon = "format-text-code", action = { key = ["F12"] }},
+]
+
+[app_rules.zen]
+widgets = [
+    { widget = "button", icon = "view-refresh", action = { exec = "sh -c zen-browser" }},
+    { widget = "button", icon = "tab-new", action = { key = ["LeftCtrl", "T"] }},
+    { widget = "button", icon = "tab-close", action = { key = ["LeftCtrl", "W"] }},
+    { widget = "button", icon = "go-jump", action = { key = ["LeftCtrl", "L"] }},
+    { widget = "button", icon = "document-open-recent", action = { key = ["LeftCtrl", "H"] }},
+    { widget = "button", icon = "document-save-as", action = { key = ["LeftCtrl", "J"] }},
+    { widget = "button", icon = "document-print", action = { key = ["LeftCtrl", "P"] }},
+    { widget = "button", icon = "format-text-code", action = { key = ["F12"] }},
+]
+
+[app_rules.plasmashell]
+widgets = [
+    { widget = "button", icon = "konsole", action = { exec = "konsole" }},
+    { widget = "button", icon = "org.kde.dolphin", action = { exec = "dolphin" }},
+    { widget = "button", icon = "kate", action = { exec = "kate" }},
+    { widget = "button", icon = "zen-browser", action = { exec = "zen-browser" }},
+    { widget = "button", icon = "steam", action = { exec = "steam" }},
+    { widget = "button", icon = "code", action = { exec = "code" }},
+    { widget = "button", icon = "lutris", action = { exec = "lutris" }},
+    { widget = "button", icon = "rustdesk", action = { exec = "rustdesk" }},
+    { widget = "button", icon = "bitwarden", action = { exec = "bitwarden-desktop" }},
+]
+
+[app_rules."org.kde.dolphin"]
+widgets = [
+    { widget = "button", icon = "go-previous", action = { key = ["LeftAlt", "Left"] }},
+    { widget = "button", icon = "go-next", action = { key = ["LeftAlt", "Right"] }},
+    { widget = "button", icon = "go-up", action = { key = ["LeftAlt", "Up"] }},
+    { widget = "button", icon = "folder-new", action = { key = ["F10"] }},
+    { widget = "button", icon = "edit-find", action = { key = ["LeftCtrl", "F"] }},
+    { widget = "button", icon = "view-split-left-right", action = { key = ["F3"] }},
+    { widget = "button", icon = "edit-rename", action = { key = ["F2"] }},
+    { widget = "button", icon = "edit-delete", action = { key = ["Delete"] }},
+]
+
+[app_rules."org.kde.kate"]
+widgets = [
+    { widget = "button", icon = "document-new", action = { key = ["LeftCtrl", "N"] }},
+    { widget = "button", icon = "document-open", action = { key = ["LeftCtrl", "O"] }},
+    { widget = "button", icon = "document-save", action = { key = ["LeftCtrl", "S"] }},
+    { widget = "button", icon = "edit-undo", action = { key = ["LeftCtrl", "Z"] }},
+    { widget = "button", icon = "edit-find", action = { key = ["LeftCtrl", "F"] }},
+    { widget = "button", icon = "edit-find-replace", action = { key = ["LeftCtrl", "R"] }},
+    { widget = "button", icon = "go-jump", action = { key = ["LeftCtrl", "G"] }},
+    { widget = "button", icon = "view-split-left-right", action = { key = ["LeftCtrl", "LeftShift", "L"] }},
+]
+
+[app_rules."org.kde.konsole"]
+widgets = [
+    { widget = "button", icon = "tab-new", action = { key = ["LeftCtrl", "LeftShift", "T"] }},
+    { widget = "button", icon = "tab-close", action = { key = ["LeftCtrl", "LeftShift", "W"] }},
+    { widget = "button", icon = "view-split-left-right", action = { key = ["LeftCtrl", "LeftShift", "Num9"] }},
+    { widget = "button", icon = "view-split-top-bottom", action = { key = ["LeftCtrl", "LeftShift", "Num0"] }},
+    { widget = "button", icon = "edit-find", action = { key = ["LeftCtrl", "LeftShift", "F"] }},
+    { widget = "button", icon = "edit-copy", action = { key = ["LeftCtrl", "LeftShift", "C"] }},
+    { widget = "button", icon = "edit-paste", action = { key = ["LeftCtrl", "LeftShift", "V"] }},
+    { widget = "button", icon = "window-close", action = { key = ["LeftCtrl", "D"] }},
+]
+
+[app_rules.krita]
+widgets = [
+    { widget = "button", icon = "edit-undo", action = { key = ["LeftCtrl", "Z"] }},
+    { widget = "button", icon = "edit-redo", action = { key = ["LeftCtrl", "LeftShift", "Z"] }},
+    { widget = "button", icon = "document-save", action = { key = ["LeftCtrl", "S"] }},
+    { widget = "button", icon = "draw-brush", action = { key = ["B"] }},
+    { widget = "button", icon = "draw-eraser", action = { key = ["E"] }},
+    { widget = "button", icon = "draw-rectangle", action = { key = ["R"] }},
+    { widget = "button", icon = "draw-circle", action = { key = ["O"] }},
+    { widget = "button", icon = "draw-path", action = { key = ["L"] }},
+]
+
+[app_rules."org.kde.gwenview"]
+widgets = [
+    { widget = "button", icon = "go-previous", action = { key = ["Left"] }},
+    { widget = "button", icon = "go-next", action = { key = ["Right"] }},
+    { widget = "button", icon = "zoom-in", action = { key = ["LeftCtrl", "Equal"] }},
+    { widget = "button", icon = "zoom-out", action = { key = ["LeftCtrl", "Minus"] }},
+    { widget = "button", icon = "zoom-fit-best", action = { key = ["LeftCtrl", "Num0"] }},
+    { widget = "button", icon = "view-fullscreen", action = { key = ["F11"] }},
+    { widget = "button", icon = "edit-delete", action = { key = ["Delete"] }},
+    { widget = "button", icon = "document-save-as", action = { key = ["LeftCtrl", "LeftShift", "S"] }},
+]
+
+[app_rules."org.kde.spectacle"]
+widgets = [
+    { widget = "button", icon = "camera-photo", action = { key = ["LeftCtrl", "N"] }},
+    { widget = "button", icon = "document-save", action = { key = ["LeftCtrl", "S"] }},
+    { widget = "button", icon = "edit-copy", action = { key = ["LeftCtrl", "C"] }},
+    { widget = "button", icon = "region-select", action = { key = ["LeftCtrl", "R"] }},
+    { widget = "button", icon = "dialog-ok", action = { key = ["Enter"] }},
+    { widget = "button", icon = "dialog-cancel", action = { key = ["Esc"] }},
+    { widget = "button", icon = "draw-freehand", action = { key = ["LeftCtrl", "D"] }},
+    { widget = "button", icon = "document-open", action = { key = ["LeftCtrl", "O"] }},
+]

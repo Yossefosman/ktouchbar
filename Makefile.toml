@@ -1,0 +1,30 @@
+[config]
+skip_core_tasks = true
+
+[tasks.dist]
+description = "Create source tarball for makepkg"
+script = '''
+git archive --prefix=ktouchbar-${CARGO_MAKE_CRATE_VERSION}/ -o ktouchbar-${CARGO_MAKE_CRATE_VERSION}.tar.gz HEAD
+'''
+
+[tasks.pkg]
+description = "Build Arch Linux package (split architecture, testing)"
+dependencies = ["dist"]
+script = "BUILDDIR=$PWD/temp makepkg -f; rm -rf $PWD/temp"
+
+[tasks.install]
+description = "Build and install Arch Linux package (split architecture, testing)"
+dependencies = ["dist"]
+script = "BUILDDIR=$PWD/temp makepkg -fsi; rm -rf $PWD/temp"
+
+[tasks.build]
+description = "Build release binaries for split architecture"
+script = "cargo build --release --locked --bin ktouchbar-system --bin ktouchbar-user"
+
+[tasks.clean]
+description = "Remove build artifacts"
+script = '''
+rm -f ktouchbar-*.tar.gz ktouchbar-*.pkg.tar.zst
+rm -rf pkg/ src/ktouchbar-*/ temp/
+cargo clean
+'''

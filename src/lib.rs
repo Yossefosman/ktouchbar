@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: GPL-3.0-only
+pub mod backlight;
+pub mod battery_monitor;
+pub mod config;
+pub mod display;
+pub mod slider;
+pub mod dynamicshortcuts;
+pub mod fonts;
+pub mod icon_cache;
+pub mod pixel_shift;
+pub mod system_monitor;
+pub mod user_cache;
+pub mod widget;

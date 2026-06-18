@@ -1,0 +1,83 @@
+_daemon_reload_all_users() {
+  loginctl list-sessions --no-legend 2>/dev/null | while read -r session uid user rest; do
+    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" \
+      systemctl --user daemon-reload 2>/dev/null || true
+  done
+}
+
+_start_de_for_all_users() {
+  loginctl list-sessions --no-legend 2>/dev/null | while read -r session uid user rest; do
+    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" \
+      systemctl --user start ktouchbar-user.service 2>/dev/null || true
+  done
+}
+
+_stop_de_for_all_users() {
+  loginctl list-sessions --no-legend 2>/dev/null | while read -r session uid user rest; do
+    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" \
+      systemctl --user stop ktouchbar-user.service 2>/dev/null || true
+  done
+}
+
+_remove_stale_symlinks() {
+  rm -f /etc/systemd/user/default.target.wants/ktouchbar*.service 2>/dev/null || true
+  for dir in /home/*/.config/systemd/user/default.target.wants/; do
+    [ -d "$dir" ] || continue
+    rm -f "$dir/ktouchbar"*.service 2>/dev/null || true
+  done
+}
+
+_provision_user_config() {
+  loginctl list-sessions --no-legend 2>/dev/null | while read -r session uid user rest; do
+    local user_home
+    user_home=$(getent passwd "$user" | cut -d: -f6)
+    [ -z "$user_home" ] && continue
+
+    local user_config="$user_home/.config/ktouchbar/configs"
+    if [ ! -d "$user_config" ]; then
+      mkdir -p "$user_config"
+      cp -r /usr/share/ktouchbar/configs/* "$user_config/" 2>/dev/null || true
+      chown -R "$user:" "$user_home/.config/ktouchbar" 2>/dev/null || true
+    fi
+  done
+}
+
+post_install() {
+  udevadm control --reload-rules 2>/dev/null || true
+  udevadm trigger 2>/dev/null || true
+  systemctl enable ktouchbar-system.service 2>/dev/null || true
+  systemctl start ktouchbar-system.service 2>/dev/null || true
+  systemctl --global enable ktouchbar-user.service 2>/dev/null || true
+  _daemon_reload_all_users
+  _start_de_for_all_users
+  kwriteconfig5 --file kwinrc --group Plugins --key ktouchbar_dynamicshortcutsEnabled true 2>/dev/null || true
+  _provision_user_config
+}
+
+pre_upgrade() {
+  systemctl stop ktouchbar-system.service 2>/dev/null || true
+  _stop_de_for_all_users
+}
+
+post_upgrade() {
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl start ktouchbar-system.service 2>/dev/null || true
+  _daemon_reload_all_users
+  _start_de_for_all_users
+  kwriteconfig5 --file kwinrc --group Plugins --key ktouchbar_dynamicshortcutsEnabled true 2>/dev/null || true
+  _provision_user_config
+}
+
+pre_remove() {
+  systemctl stop ktouchbar-system.service 2>/dev/null || true
+  _stop_de_for_all_users
+}
+
+post_remove() {
+  systemctl disable ktouchbar-system.service 2>/dev/null || true
+  systemctl --global disable ktouchbar-user.service 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+  _daemon_reload_all_users
+  _remove_stale_symlinks
+  udevadm control --reload-rules 2>/dev/null || true
+}

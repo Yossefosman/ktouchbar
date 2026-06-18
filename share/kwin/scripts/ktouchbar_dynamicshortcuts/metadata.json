@@ -1,0 +1,17 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "ktouchbar@localhost",
+                "Name": "KTouchBar Developer"
+            }
+        ],
+        "Description": "Reports active window info to KTouchBar via D-Bus",
+        "Icon": "preferences-system-windows",
+        "Id": "ktouchbar_dynamicshortcuts",
+        "License": "GPL-3.0-only",
+        "Name": "KTouchBar Dynamic Shortcuts"
+    },
+    "X-Plasma-API": "javascript"
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=KTouchBar Hardware - Touch Bar DRM display server
+After=display-manager.target
+Wants=display-manager.target
+
+[Service]
+ExecStart=/usr/bin/ktouchbar-system
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
