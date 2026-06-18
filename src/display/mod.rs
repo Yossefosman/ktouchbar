@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
+pub mod backlight;
+pub mod pixel_shift;
+
 use anyhow::{anyhow, Result};
 use drm::{
     buffer::DrmFourcc,

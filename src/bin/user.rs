@@ -20,14 +20,10 @@ extern "C" fn handle_sigterm(_: i32) {
     SIGTERM_RECEIVED.store(true, Ordering::SeqCst);
 }
 
-use ktouchbar::battery_monitor;
-use ktouchbar::config::{Action, Config, ConfigManager, WidgetConfig};
-use ktouchbar::dynamicshortcuts;
-use ktouchbar::icon_cache;
-use ktouchbar::pixel_shift::PixelShiftManager;
-use ktouchbar::system_monitor;
-use ktouchbar::user_cache;
-use ktouchbar::widget::{self, FunctionLayer, WidgetConfigCtx};
+use ktouchbar::config::{Config, ConfigManager, WidgetConfig};
+use ktouchbar::display::pixel_shift::PixelShiftManager;
+use ktouchbar::widget::{self, dynamicshortcuts, icon, FunctionLayer, WidgetConfigCtx};
+use ktouchbar::widget::Action;
 
 const DE_POLL_MS: i32 = 50;
 const HW_POLL_MS: i32 = 30;
@@ -89,7 +85,6 @@ fn build_layer(
         global_track_outline: config.slider_track_outline.as_ref(),
     };
     if expanded.is_empty() {
-        // fallback: show at least one text widget so layer is not empty
         return FunctionLayer::with_config(
             vec![WidgetConfig::Button {
                 icon: None, text: Some("ktouchbar".to_string()),
@@ -125,6 +120,147 @@ fn import_graphical_env() {
                 }
             }
         }
+    }
+}
+
+// ── Desktop user detection ──────────────────────────────────────
+
+fn detect_desktop_user() -> Option<String> {
+    if let Ok(user) = std::env::var("SUDO_USER") {
+        return Some(user);
+    }
+
+    if let Ok(output) = std::process::Command::new("loginctl")
+        .args(["list-sessions", "--no-legend"])
+        .output() {
+        if let Ok(sessions) = String::from_utf8(output.stdout) {
+            for line in sessions.lines() {
+                let mut parts = line.split_whitespace();
+                let session_id = parts.next();
+                let _display = parts.next();
+                let user_name = parts.next();
+                let seat = parts.next();
+                if let (Some(session_id), Some(user_name), Some(seat)) = (session_id, user_name, seat) {
+                    if seat == "seat0" && user_name != "root" {
+                        if let Ok(session_output) = std::process::Command::new("loginctl")
+                            .args(["show-session", session_id, "-p", "Type"])
+                            .output() {
+                            if let Ok(session_info) = String::from_utf8(session_output.stdout) {
+                                if session_info.contains("Type=wayland") || session_info.contains("Type=x11") {
+                                    return Some(user_name.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(entries) = std::fs::read_dir("/run/user") {
+        for entry in entries.flatten() {
+            if let Some(uid_str) = entry.file_name().to_str() {
+                if let Ok(uid) = uid_str.parse::<u32>() {
+                    if (1000..65534).contains(&uid) {
+                        let wayland_socket = entry.path().join("wayland-0");
+                        if wayland_socket.exists() {
+                            if let Ok(output) = std::process::Command::new("getent")
+                                .args(["passwd", uid_str])
+                                .output() {
+                                if let Ok(passwd_line) = String::from_utf8(output.stdout) {
+                                    if let Some(username) = passwd_line.split(':').next() {
+                                        return Some(username.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+// ── System monitor (minute tracker, cache cleanup ticker) ───────
+
+use std::sync::Mutex;
+
+#[derive(Debug, Clone)]
+struct SystemState {
+    current_minute: u32,
+    cache_cleanup_due: bool,
+}
+
+impl SystemState {
+    fn new() -> Self {
+        let now = Local::now();
+        SystemState {
+            current_minute: now.minute(),
+            cache_cleanup_due: false,
+        }
+    }
+}
+
+static SYSTEM_STATE: std::sync::LazyLock<Mutex<SystemState>> =
+    std::sync::LazyLock::new(|| Mutex::new(SystemState::new()));
+
+struct SystemMonitor {
+    _handle: thread::JoinHandle<()>,
+}
+
+impl SystemMonitor {
+    fn new() -> Self {
+        let handle = thread::spawn(move || {
+            Self::monitor_loop();
+        });
+
+        SystemMonitor { _handle: handle }
+    }
+
+    fn monitor_loop() {
+        let mut cache_cleanup_counter = 0u32;
+
+        loop {
+            let current_time = Local::now();
+            let current_minute = current_time.minute();
+
+            if let Ok(mut state) = SYSTEM_STATE.lock() {
+                if state.current_minute != current_minute {
+                    state.current_minute = current_minute;
+                }
+
+                cache_cleanup_counter += 1;
+                if cache_cleanup_counter >= 60 {
+                    state.cache_cleanup_due = true;
+                    cache_cleanup_counter = 0;
+                }
+            }
+
+            thread::sleep(Duration::from_secs(5));
+        }
+    }
+}
+
+fn get_current_minute() -> u32 {
+    if let Ok(state) = SYSTEM_STATE.lock() {
+        state.current_minute
+    } else {
+        Local::now().minute()
+    }
+}
+
+fn should_cleanup_cache() -> bool {
+    if let Ok(mut state) = SYSTEM_STATE.lock() {
+        if state.cache_cleanup_due {
+            state.cache_cleanup_due = false;
+            true
+        } else {
+            false
+        }
+    } else {
+        false
     }
 }
 
@@ -171,21 +307,21 @@ fn main() {
 
     println!("ktouchbar-user: fb {}x{}, mode {}x{}", fb_width, fb_height, mode_vdisplay, mode_hdisplay);
 
-    // Start KWin dynamicshortcuts D-Bus server
-    dynamicshortcuts::init();
-
-    user_cache::initialize_user_environment_cache();
+    detect_desktop_user().map(|u| dynamicshortcuts::init(&u));
 
     let mut cfg_mgr = ConfigManager::new();
-    let (mut cfg, mut cached_main, mut cached_fn) = cfg_mgr.load_config();
+    let mut cfg = cfg_mgr.load_config();
+    let rebuild = rebuild_cached_layers(&cfg);
+    let mut cached_main = rebuild.0;
+    let mut cached_fn = rebuild.1;
     let mut layers = [cached_main.clone(), cached_fn.clone()];
     send_backlight_config(&sys_conn, &cfg);
 
-    icon_cache::preload_common_icons();
+    icon::preload_common_icons();
 
-    let _battery_monitor = widget::find_battery_device().map(battery_monitor::BatteryMonitor::new);
-    let _system_monitor = system_monitor::SystemMonitor::new();
-    icon_cache::start_background_preloader();
+    let _battery_monitor = widget::battery::find_battery_device().map(widget::battery::BatteryMonitor::new);
+    let _system_monitor = SystemMonitor::new();
+    icon::start_background_preloader();
 
     let mut surface =
         ImageSurface::create(Format::ARgb32, fb_width as i32, fb_height as i32).unwrap();
@@ -202,8 +338,10 @@ fn main() {
     let mut last_hw_poll = Instant::now();
 
     loop {
-        // Config reload
-        if cfg_mgr.update_config(&mut cfg, &mut cached_main, &mut cached_fn) {
+        if cfg_mgr.update_config(&mut cfg) {
+            let rebuild = rebuild_cached_layers(&cfg);
+            cached_main = rebuild.0;
+            cached_fn = rebuild.1;
             active_layer = 0;
             navigation_state.reset_to_main();
             layers[0] = cached_main.clone();
@@ -215,7 +353,6 @@ fn main() {
             send_backlight_config(&sys_conn, &cfg);
         }
 
-        // Navigation timeout
         if navigation_state.current_panel.is_some()
             && navigation_state.should_timeout(cfg.panel_timeout_seconds)
         {
@@ -227,7 +364,6 @@ fn main() {
             release_all_held_keys(&sys_conn, &mut held_keys);
         }
 
-        // Poll HW for events
         if last_hw_poll.elapsed() >= Duration::from_millis(HW_POLL_MS as u64) {
             last_hw_poll = Instant::now();
             let mut state = EventState {
@@ -248,8 +384,7 @@ fn main() {
             );
         }
 
-        // Time and battery
-        let current_minute = system_monitor::get_current_minute();
+        let current_minute = get_current_minute();
         if layers[active_layer].displays_time && current_minute != last_redraw_minute {
             needs_complete_redraw = true;
             last_redraw_minute = current_minute;
@@ -263,11 +398,10 @@ fn main() {
             last_battery_update_minute = current_minute;
         }
 
-        if system_monitor::should_cleanup_cache() {
-            icon_cache::cleanup_cache();
+        if should_cleanup_cache() {
+            icon::cleanup_cache();
         }
 
-        // KWin window tracking — rebuild cached layers when window changes
         let window_cache_updated = dynamicshortcuts::check_and_reset_cache_updated();
         if dynamicshortcuts::check_and_reset_inactivity() {
             let _ = sys_conn.call_method(
@@ -291,7 +425,6 @@ fn main() {
             release_all_held_keys(&sys_conn, &mut held_keys);
         }
 
-        // Pending actions
         if !pending_actions.is_empty() {
             let mut state = EventState {
                 layers: &mut layers,
@@ -309,7 +442,6 @@ fn main() {
             );
         }
 
-        // Render and send frame
         let any_changed = layers[active_layer].widgets.iter().any(|(_, w)| {
             if w.changed {
                 return true;
@@ -345,7 +477,6 @@ fn main() {
         }
 
         if SIGTERM_RECEIVED.load(Ordering::SeqCst) {
-            // Release our D-Bus name so the system daemon detects disconnect immediately
             let _ = sys_conn.call_method(
                 Some("org.freedesktop.DBus"),
                 "/org/freedesktop/DBus",
@@ -353,7 +484,6 @@ fn main() {
                 "ReleaseName",
                 &(NAME_LIFETIME,),
             );
-            // Then notify system daemon to wake up and re-check
             let _ = sys_conn.call_method(
                 Some("org.ktouchbar.Hardware"),
                 "/org/ktouchbar/Hardware",
@@ -413,7 +543,6 @@ fn poll_hw_events(
     width: u16,
     height: u16,
 ) {
-    // Poll Fn state
     let fn_pressed: bool = conn
         .call_method(
             Some("org.ktouchbar.Hardware"),
@@ -432,7 +561,6 @@ fn poll_hw_events(
         clear_all_touches(state.layers, state.touches);
     }
 
-    // Poll touch events
     let events: Vec<TouchEventData> = conn
         .call_method(
             Some("org.ktouchbar.Hardware"),
@@ -531,7 +659,6 @@ fn process_touch_event(
                         let w = state.layers[active_layer].get_widget_mut(w_idx, c_idx);
                         w.active = true;
                         w.changed = true;
-                        // Mark parent container as changed if child
                         if c_idx.is_some() {
                             state.layers[active_layer].widgets[w_idx].1.changed = true;
                         }
@@ -704,8 +831,6 @@ fn handle_widget_action(
     match action {
         Action::Key(keys) => {
             if active {
-                // Release any previously held keys before pressing new ones,
-                // so stuck modifiers get cleaned up if a release was missed.
                 release_all_held_keys(conn, state.held_keys);
                 for key in keys {
                     inject_key(conn, *key, true);
@@ -845,7 +970,6 @@ fn update_layer_for_navigation(
             release_all_held_keys(conn, held_keys);
         }
     } else {
-        // Back to cached main
         let rebuild = rebuild_cached_layers(config);
         layers[0] = rebuild.0;
         layers[1] = rebuild.1;
@@ -864,7 +988,6 @@ fn clear_all_touches(
     }
     for layer in layers.iter_mut() {
         for (_, w) in layer.widgets.iter_mut() {
-            // Clear container children active states too
             if let ktouchbar::widget::WidgetKind::Container(ref mut state) = w.kind {
                 for child in &mut state.children {
                     if child.active {

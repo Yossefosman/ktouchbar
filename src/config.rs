@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use cairo::FontFace;
-use freedesktop::xdg_config_home;
 use freetype::Library as FtLibrary;
 use input_linux::Key;
-use crate::slider::SliderType;
+use fontconfig::Fontconfig;
 use nix::{
     errno::Errno,
     sys::inotify::{AddWatchFlags, InitFlags, Inotify, InotifyEvent, WatchDescriptor},
@@ -70,40 +69,6 @@ impl<'de> Deserialize<'de> for PaddingSpec {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Action {
-    Key(Vec<Key>),
-    Panel(String),
-    Back,
-    Exec(String),
-}
-
-impl<'de> Deserialize<'de> for Action {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum ActionProxy {
-            Key { key: Vec<Key> },
-            Panel { panel: String },
-            Back { back: bool },
-            Exec { exec: String },
-        }
-
-        match ActionProxy::deserialize(deserializer)? {
-            ActionProxy::Key { key } => Ok(Action::Key(key)),
-            ActionProxy::Panel { panel } => Ok(Action::Panel(panel)),
-            ActionProxy::Back { back: true } => Ok(Action::Back),
-            ActionProxy::Back { back: false } => {
-                Err(de::Error::invalid_value(de::Unexpected::Bool(false), &"back = true"))
-            }
-            ActionProxy::Exec { exec } => Ok(Action::Exec(exec)),
-        }
-    }
-}
-
 // ── Common fields shared by all widget types ────────────────────
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -124,6 +89,25 @@ pub struct CommonFields {
     pub slider_track_outline: Option<OutlineColor>,
 }
 
+// ── Slider type ─────────────────────────────────────────────────
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+pub enum SliderType {
+    Volume,
+    Brightness,
+    KeyboardBrightness,
+}
+
+impl SliderType {
+    pub fn display_name(self) -> &'static str {
+        match self {
+            SliderType::Volume => "Volume",
+            SliderType::Brightness => "Brightness",
+            SliderType::KeyboardBrightness => "Kbd Brightness",
+        }
+    }
+}
+
 // ── Tagged widget config ────────────────────────────────────────
 
 #[derive(Deserialize, Debug, Clone)]
@@ -132,7 +116,7 @@ pub enum WidgetConfig {
     Button {
         icon: Option<String>,
         text: Option<String>,
-        action: Option<Action>,
+        action: Option<crate::widget::Action>,
         #[serde(flatten)]
         common: CommonFields,
     },
@@ -194,25 +178,17 @@ pub struct Config {
     pub app_rules: HashMap<String, Vec<WidgetConfig>>,
 }
 
-pub fn user_config_dir() -> std::path::PathBuf {
-    if std::env::var_os("HOME").is_some() {
-        xdg_config_home().join("ktouchbar")
-    } else {
-        std::path::PathBuf::from("/etc/ktouchbar")
-    }
-}
-
-fn read_user_file(filename: &str) -> Option<String> {
-    let path = user_config_dir().join("configs").join(filename);
-    read_to_string(&path).ok()
-}
-
 fn load_font(name: &str) -> FontFace {
-    let (file_name, font_index) = crate::fonts::find_font(name).unwrap_or_else(|| {
+    let fc = Fontconfig::new().unwrap_or_else(|| {
+        panic!("Unable to initialise fontconfig. If you are using the default config, make sure you have at least one font installed")
+    });
+    let (family, style) = name.split_once(':').unwrap_or((name, ""));
+    let style = if style.is_empty() { None } else { Some(style) };
+    let font = fc.find(family, style).unwrap_or_else(|| {
         panic!("Unable to find specified font '{}'. If you are using the default config, make sure you have at least one font installed", name)
     });
     let ft_library = FtLibrary::init().unwrap();
-    let face = ft_library.new_face(&file_name, font_index as isize).unwrap();
+    let face = ft_library.new_face(&font.path.to_string_lossy().into_owned(), font.index.unwrap_or(0) as isize).unwrap();
     FontFace::create_from_ft(&face).unwrap()
 }
 
@@ -301,8 +277,8 @@ fn load_toml(path: &str) -> Option<ConfigFile> {
 }
 
 fn load_toml_user(filename: &str) -> Option<ConfigFile> {
-    let path = user_config_dir().join("configs").join(filename);
-    match read_user_file(filename) {
+    let path = crate::paths::user_config_dir().join("configs").join(filename);
+    match std::fs::read_to_string(&path).ok() {
         Some(content) => match toml::from_str(&content) {
             Ok(cf) => {
                 println!("ktouchbar: loaded user config from {}", path.display());
@@ -322,11 +298,10 @@ fn load_toml_user(filename: &str) -> Option<ConfigFile> {
 
 // ── Exposed loading ─────────────────────────────────────────────
 
-pub fn load_config() -> (Config, crate::widget::FunctionLayer, crate::widget::FunctionLayer) {
+pub fn load_config() -> Config {
     let sys = load_toml("/usr/share/ktouchbar/configs/config.toml");
     let user = load_toml_user("config.toml");
 
-    // Merge global
     let mut global = GlobalProxy::default();
     if let Some(ref cf) = sys {
         if let Some(ref g) = cf.global {
@@ -364,7 +339,6 @@ pub fn load_config() -> (Config, crate::widget::FunctionLayer, crate::widget::Fu
     let icon_theme = global.icon_theme.clone().unwrap_or_else(|| "auto".to_string());
     let default_padding = global.default_padding;
 
-    // Merge layers
     let mut main_widgets: Vec<WidgetConfig> = Vec::new();
     let mut fn_widgets: Vec<WidgetConfig> = Vec::new();
 
@@ -401,7 +375,7 @@ pub fn load_config() -> (Config, crate::widget::FunctionLayer, crate::widget::Fu
             WidgetConfig::Button {
                 icon: None,
                 text: Some(format!("F{i}")),
-                action: Some(Action::Key(key)),
+                action: Some(crate::widget::Action::Key(key)),
                 common: CommonFields::default(),
             }
         }).collect();
@@ -436,7 +410,6 @@ pub fn load_config() -> (Config, crate::widget::FunctionLayer, crate::widget::Fu
         ];
     }
 
-    // Merge panels
     let mut panels: HashMap<String, Vec<WidgetConfig>> = HashMap::new();
     if let Some(ref cf) = sys {
         if let Some(ref p) = cf.panels {
@@ -457,7 +430,6 @@ pub fn load_config() -> (Config, crate::widget::FunctionLayer, crate::widget::Fu
         }
     }
 
-    // Merge app_rules
     let mut app_rules: HashMap<String, Vec<WidgetConfig>> = HashMap::new();
     if let Some(ref cf) = sys {
         if let Some(ref a) = cf.app_rules {
@@ -478,7 +450,7 @@ pub fn load_config() -> (Config, crate::widget::FunctionLayer, crate::widget::Fu
         }
     }
 
-    let cfg = Config {
+    Config {
         show_outline: global.show_outline.unwrap_or(true),
         enable_pixel_shift: global.enable_pixel_shift.unwrap_or(false),
         font_face: load_font(global.font_template.as_deref().unwrap_or("sans-serif")),
@@ -497,26 +469,11 @@ pub fn load_config() -> (Config, crate::widget::FunctionLayer, crate::widget::Fu
         outline_color: global.outline_color,
         active_color: global.active_color,
         slider_track_outline: global.slider_track_outline,
-        main_layer: main_widgets.clone(),
-        fn_layer: fn_widgets.clone(),
+        main_layer: main_widgets,
+        fn_layer: fn_widgets,
         panels,
         app_rules,
-    };
-
-    let col_src = global.slider_color_source.as_deref();
-    let ctx = crate::widget::WidgetConfigCtx {
-        global_theme: Some(&icon_theme),
-        default_padding,
-        slider_color_source: col_src,
-        global_outline_color: cfg.outline_color.as_ref(),
-        global_active_color: cfg.active_color.as_ref(),
-        global_slider_live_update: Some(cfg.slider_live_update),
-        global_track_outline: cfg.slider_track_outline.as_ref(),
-    };
-    let main_layer = crate::widget::FunctionLayer::with_config(main_widgets, &ctx);
-    let fn_layer = crate::widget::FunctionLayer::with_config(fn_widgets, &ctx);
-
-    (cfg, main_layer, fn_layer)
+    }
 }
 
 // ── Config defaults (for system daemon — no file I/O) ───────────
@@ -559,7 +516,7 @@ pub struct ConfigManager {
 
 fn arm_inotify(inotify_fd: &Inotify) -> Option<WatchDescriptor> {
     let flags = AddWatchFlags::IN_MOVED_TO | AddWatchFlags::IN_CLOSE_WRITE | AddWatchFlags::IN_ONESHOT;
-    let config_dir = user_config_dir().join("configs");
+    let config_dir = crate::paths::user_config_dir().join("configs");
     match inotify_fd.add_watch(&config_dir, flags) {
         Ok(wd) => Some(wd),
         Err(Errno::ENOENT) => None,
@@ -583,23 +540,18 @@ impl ConfigManager {
         ConfigManager { inotify_fd, watch_desc }
     }
 
-    pub fn load_config(&self) -> (Config, crate::widget::FunctionLayer, crate::widget::FunctionLayer) {
+    pub fn load_config(&self) -> Config {
         load_config()
     }
 
-    pub fn update_config(
-        &mut self,
-        cfg: &mut Config,
-        main_layer: &mut crate::widget::FunctionLayer,
-        fn_layer: &mut crate::widget::FunctionLayer,
-    ) -> bool {
+    pub fn update_config(&mut self, cfg: &mut Config) -> bool {
         if self.watch_desc.is_none() {
             self.watch_desc = arm_inotify(&self.inotify_fd);
             return false;
         }
         match self.inotify_fd.read_events() {
             Err(Errno::EAGAIN) => false,
-            r => self.handle_events(cfg, main_layer, fn_layer, r),
+            r => self.handle_events(cfg, r),
         }
     }
 
@@ -607,8 +559,6 @@ impl ConfigManager {
     fn handle_events(
         &mut self,
         cfg: &mut Config,
-        main_layer: &mut crate::widget::FunctionLayer,
-        fn_layer: &mut crate::widget::FunctionLayer,
         evts: Result<Vec<InotifyEvent>, Errno>,
     ) -> bool {
         let mut ret = false;
@@ -616,10 +566,7 @@ impl ConfigManager {
             if Some(evt.wd) != self.watch_desc {
                 continue;
             }
-            let parts = load_config();
-            *cfg = parts.0;
-            *main_layer = parts.1;
-            *fn_layer = parts.2;
+            *cfg = load_config();
             ret = true;
             self.watch_desc = arm_inotify(&self.inotify_fd);
         }

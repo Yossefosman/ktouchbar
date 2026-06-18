@@ -12,6 +12,8 @@ use std::{
     time::Instant,
 };
 
+const KNOWN_TOUCHBAR_BL: &[&str] = &["display-pipe", "228600000.dsi.0", "appletb_backlight"];
+
 fn read_attr(path: &Path, attr: &str) -> Option<u32> {
     match fs::read_to_string(path.join(attr)) {
         Ok(s) => s.trim().parse::<u32>().ok(),
@@ -28,10 +30,7 @@ fn find_backlight() -> Result<PathBuf> {
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy();
 
-        if ["display-pipe", "228600000.dsi.0", "appletb_backlight"]
-            .iter()
-            .any(|s| name.contains(s))
-        {
+        if KNOWN_TOUCHBAR_BL.iter().any(|s| name.contains(s)) {
             return Ok(entry.path());
         }
     }
@@ -39,12 +38,11 @@ fn find_backlight() -> Result<PathBuf> {
 }
 
 fn find_display_backlight() -> Option<PathBuf> {
-    let known_touchbar = ["display-pipe", "228600000.dsi.0", "appletb_backlight"];
     let entries = fs::read_dir("/sys/class/backlight/").ok()?;
     for entry in entries.flatten() {
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy();
-        if !known_touchbar.iter().any(|s| name.contains(s)) {
+        if !KNOWN_TOUCHBAR_BL.iter().any(|s| name.contains(s)) {
             return Some(entry.path());
         }
     }

@@ -13,7 +13,7 @@ const ANIMATION_RATIO: f64 = 0.05;
 // To make sure that no pixel ends up being always on, the minimum value to be safe here is the
 // size of the largest continuous colored line in the x-direction. The higher this value, the less
 // strain is put on the panel.
-pub const PIXEL_SHIFT_WIDTH_PX: u64 = 22; // should be divisible by 2
+const PIXEL_SHIFT_WIDTH_PX: u64 = 22; // should be divisible by 2
                                           // in y direction we can't really shift by a lot since icons still need to appear centered,
                                           // 2 pixels in each direction seems to be the maximum before it gets really visible.
 const PIXEL_SHIFT_HEIGHT_PX: u64 = 4; // should be divisible by 2

@@ -35,9 +35,9 @@ use std::{
 };
 use zbus::{dbus_interface, zvariant};
 
-use ktouchbar::backlight::BacklightManager;
 use ktouchbar::config::Config;
 use ktouchbar::display::DrmBackend;
+use ktouchbar::display::backlight::BacklightManager;
 use ktouchbar::widget::FunctionLayer;
 
 const DE_CHECK_INTERVAL: Duration = Duration::from_secs(2);
@@ -118,7 +118,6 @@ impl HardwareService {
         })?;
         state.frame_count = state.frame_count.wrapping_add(1);
         state.pending_frame = true;
-        // Wake up main loop to blit the frame immediately
         let val: u64 = 1;
         unsafe { libc::write(self.event_fd, &val as *const _ as *const libc::c_void, 8); }
         Ok(state.frame_count)
@@ -252,7 +251,6 @@ fn real_main(drm: &mut DrmBackend) {
         fn_pressed: false,
     }));
 
-    // Try to set up D-Bus; if it fails, run in fallback-only mode
     let dbus_conn = match zbus::blocking::Connection::system() {
         Ok(c) => c,
         Err(e) => {
@@ -287,7 +285,6 @@ fn real_main(drm: &mut DrmBackend) {
         .add(input_main.as_fd(), EpollEvent::new(EpollFlags::EPOLLIN, 1))
         .unwrap();
 
-    // Create eventfd for waking main loop on PushFrame
     let event_fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK) };
     if event_fd < 0 {
         eprintln!("ktouchbar-system: failed to create eventfd");
@@ -335,7 +332,6 @@ fn real_main(drm: &mut DrmBackend) {
     println!("ktouchbar-system: D-Bus service ready on system bus");
 
     loop {
-        // Check DE connection status via D-Bus NameHasOwner
         if last_de_check.elapsed() >= DE_CHECK_INTERVAL {
             last_de_check = Instant::now();
             let was_connected = de_connected;
@@ -345,7 +341,6 @@ fn real_main(drm: &mut DrmBackend) {
                     println!("ktouchbar-system: DE connected");
                 } else {
                     println!("ktouchbar-system: DE disconnected, fallback rendering");
-                    // Reload fallback widgets
                     let (fb_layer, fb_keys) = build_fallback_widgets();
                     fallback_layer = fb_layer;
                     fallback_keys = fb_keys;
@@ -355,7 +350,6 @@ fn real_main(drm: &mut DrmBackend) {
         }
 
         if de_connected {
-            // Blit DE frame if pending
             let mut hw = hw_state.lock().unwrap();
             if hw.pending_frame {
                 hw.pending_frame = false;
@@ -368,7 +362,6 @@ fn real_main(drm: &mut DrmBackend) {
             }
             drop(hw);
         } else {
-            // Fallback: render F1-F12 widgets
             let clips = fallback_layer.draw(
                 &cfg,
                 width as i32,
@@ -387,7 +380,6 @@ fn real_main(drm: &mut DrmBackend) {
             }
         }
 
-        // Process input events (blocking wait, woken by input or eventfd)
         let n_events = match epoll.wait(&mut epoll_events, Option::<u16>::None) {
             Ok(n) => n,
             Err(e) => {
@@ -396,12 +388,10 @@ fn real_main(drm: &mut DrmBackend) {
             }
         };
 
-        // Handle eventfd wakeup (PushFrame or NotifyUserDisconnect)
         for ev in epoll_events[..n_events as usize].iter() {
             if ev.data() == 2 {
                 let mut val: u64 = 0;
                 unsafe { libc::read(event_fd, &mut val as *mut _ as *mut libc::c_void, 8); }
-                // Force DE re-check on next loop iteration
                 last_de_check = Instant::now() - DE_CHECK_INTERVAL;
                 if de_connected {
                     let mut hw = hw_state.lock().unwrap();
@@ -482,7 +472,6 @@ fn real_main(drm: &mut DrmBackend) {
                             _ => {}
                         }
                     } else {
-                        // Fallback mode: hit-test and inject keys
                         match te {
                             TouchEvent::Down(dn) => {
                                 let x = dn.x_transformed(width as u32);
@@ -546,8 +535,7 @@ fn run_fallback_only(drm: &mut DrmBackend, width: u16, height: u16, db_width: u3
 
 fn build_fallback_widgets() -> (FunctionLayer, Vec<Key>) {
     use ktouchbar::config::{WidgetConfig, CommonFields};
-    use ktouchbar::config::Action;
-    use ktouchbar::widget::WidgetConfigCtx;
+    use ktouchbar::widget::{Action, WidgetConfigCtx};
     let mut widgets_configs: Vec<WidgetConfig> = Vec::new();
     let mut key_map: Vec<Key> = Vec::new();
     let mut add_key = |text: String, key: Key| {

@@ -19,6 +19,9 @@ static CACHE_UPDATED: std::sync::LazyLock<Mutex<bool>> =
 
 pub static INACTIVITY_RESET: AtomicBool = AtomicBool::new(false);
 
+static USERNAME: std::sync::LazyLock<Mutex<Option<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(None));
+
 struct DynamicShortcutsService;
 
 #[dbus_interface(name = "org.ktouchbar.DynamicShortcuts")]
@@ -44,7 +47,11 @@ impl DynamicShortcutsService {
     }
 }
 
-pub fn init() {
+pub fn init(username: &str) {
+    if let Ok(mut u) = USERNAME.lock() {
+        *u = Some(username.to_string());
+    }
+
     std::thread::Builder::new()
         .name("dynamicshortcuts-dbus".into())
         .spawn(|| loop {
@@ -61,7 +68,7 @@ pub fn init() {
 }
 
 fn find_session_bus_address() -> Option<String> {
-    let username = crate::user_cache::get_cached_user_environment()?.username;
+    let username = USERNAME.lock().ok()?.clone()?;
     let uid_str = std::process::Command::new("id")
         .args(["-u", &username])
         .output()
