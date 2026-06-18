@@ -22,7 +22,7 @@ makedepends=('cargo' 'rust' 'pkg-config')
 optdepends=('kde-plasma-desktop: KDE Plasma integration')
 install=ktouchbar.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('f193ed19a96c5421654a6ee9fee9dca3563ac7714410eacd200e837ec3667e7f')
 
 build() {
   cd "$srcdir/$pkgname-$pkgver"
