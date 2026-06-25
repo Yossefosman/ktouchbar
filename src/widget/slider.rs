@@ -161,7 +161,7 @@ fn write_volume(value: f64) {
         sink_path.as_str(),
         Some("org.PulseAudio.Sink1"),
         "SetVolume",
-        &(volumes, false),
+        &volumes,
     );
 }
 
