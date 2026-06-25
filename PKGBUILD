@@ -2,7 +2,7 @@
 
 pkgname=ktouchbar
 pkgver=0.0.9
-pkgrel=3
+pkgrel=4
 pkgdesc="KTouchBar - Touch Bar daemon for KDE Plasma (split architecture)"
 arch=('x86_64')
 url="https://github.com/Yossefosman/ktouchbar"
