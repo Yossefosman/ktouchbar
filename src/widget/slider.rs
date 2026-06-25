@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::process::Command;
 use std::fs;
@@ -67,102 +66,38 @@ fn load_slider_icon(path: &str, size: f64) -> Option<ImageSurface> {
     crate::widget::icon::load_image_surface(&p, size).ok()
 }
 
-// ── Backend: Volume (PulseAudio D-Bus) ──────────────────────────
-
-const PA_VOLUME_NORM: f64 = 65536.0;
-
-fn session_conn() -> Result<zbus::blocking::Connection, anyhow::Error> {
-    Ok(zbus::blocking::Connection::session()?)
-}
+// ── Backend: Volume (pactl) ────────────────────────────────────
 
 fn read_volume() -> (f64, String) {
-    let conn = match session_conn() {
-        Ok(c) => c,
-        Err(_) => return (0.0, "N/A".into()),
-    };
-    let sinks: Vec<String> = match conn.call_method(
-        Some("org.PulseAudio.Core1"),
-        "/org/pulseaudio/core1",
-        Some("org.PulseAudio.Core1"),
-        "GetSinks",
-        &(),
-    ).and_then(|r| r.body()) {
-        Ok(s) => s,
-        Err(_) => return (0.0, "N/A".into()),
-    };
-    let sink_path = match sinks.first() {
-        Some(p) => p,
-        None => return (0.0, "N/A".into()),
-    };
-    let vol_value: zbus::zvariant::OwnedValue = match conn.call_method(
-        Some("org.PulseAudio.Core1"),
-        sink_path.as_str(),
-        Some("org.freedesktop.DBus.Properties"),
-        "Get",
-        &("org.PulseAudio.Sink1", "Volume"),
-    ).and_then(|r| r.body()) {
-        Ok(v) => v,
-        Err(_) => return (0.0, "N/A".into()),
-    };
-    let volumes: Vec<u32> = match vol_value.deref() {
-        zbus::zvariant::Value::Array(arr) => {
-            arr.iter().filter_map(|v| {
-                if let zbus::zvariant::Value::U32(n) = v { Some(*n) } else { None }
-            }).collect()
-        }
+    let output = match Command::new("pactl")
+        .args(["get-sink-volume", "@DEFAULT_SINK@"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
         _ => return (0.0, "N/A".into()),
     };
-    if volumes.is_empty() {
-        return (0.0, "N/A".into());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for part in stdout.split('/') {
+        let part = part.trim();
+        if let Some(pct) = part.strip_suffix('%') {
+            if let Ok(v) = pct.trim().parse::<f64>() {
+                let fraction = (v / 100.0).clamp(0.0, 1.0);
+                return (fraction, format!("{:.0}%", v));
+            }
+        }
     }
-    let avg = volumes.iter().copied().sum::<u32>() as f64 / volumes.len() as f64;
-    let fraction = (avg / PA_VOLUME_NORM).clamp(0.0, 1.0);
-    let pct = (fraction * 100.0).round();
-    (fraction, format!("{:.0}%", pct))
+    (0.0, "N/A".into())
 }
 
 fn write_volume(value: f64) {
-    let conn = match session_conn() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    let sinks: Vec<String> = match conn.call_method(
-        Some("org.PulseAudio.Core1"),
-        "/org/pulseaudio/core1",
-        Some("org.PulseAudio.Core1"),
-        "GetSinks",
-        &(),
-    ).and_then(|r| r.body()) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    let sink_path = match sinks.first() {
-        Some(p) => p,
-        None => return,
-    };
-    let vol_value: zbus::zvariant::OwnedValue = match conn.call_method(
-        Some("org.PulseAudio.Core1"),
-        sink_path.as_str(),
-        Some("org.freedesktop.DBus.Properties"),
-        "Get",
-        &("org.PulseAudio.Sink1", "Volume"),
-    ).and_then(|r| r.body()) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let n_channels = match vol_value.deref() {
-        zbus::zvariant::Value::Array(arr) => arr.len().max(1),
-        _ => 2,
-    };
-    let vol = (value * PA_VOLUME_NORM).round().clamp(0.0, PA_VOLUME_NORM) as u32;
-    let volumes = vec![vol; n_channels];
-    let _ = conn.call_method(
-        Some("org.PulseAudio.Core1"),
-        sink_path.as_str(),
-        Some("org.PulseAudio.Sink1"),
-        "SetVolume",
-        &volumes,
-    );
+    let pct = (value * 100.0).round().clamp(0.0, 100.0) as u32;
+    let _ = Command::new("pactl")
+        .args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{pct}%")])
+        .output();
+}
+
+fn session_conn() -> Result<zbus::blocking::Connection, anyhow::Error> {
+    Ok(zbus::blocking::Connection::session()?)
 }
 
 // ── Backend: Brightness (D-Bus) ─────────────────────────────────
